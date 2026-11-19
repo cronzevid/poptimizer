@@ -1,5 +1,6 @@
 import json
 import re
+from pathlib import Path
 from typing import Final
 
 import aiofiles
@@ -8,7 +9,8 @@ from pydantic import ValidationError
 from poptimizer.core import consts, errors, fsm
 from poptimizer.data.div import raw
 
-_DUMP: Final = consts.ROOT / "dump" / "dividends.json"
+_RUNTIME_DUMP: Final = consts.ROOT / "dump" / "dividends.json"
+_PACKAGED_DUMP: Final = Path(__file__).with_name("dividends.json")
 
 
 class Client:
@@ -24,11 +26,19 @@ class Client:
                 await _backup_dividends(ctx, divs)
 
 
-async def _restore_dividends(ctx: fsm.Ctx) -> None:
-    if not _DUMP.exists():
-        raise errors.AdapterError(f"can't restore raw dividends from {_DUMP}")
+def _dividend_source() -> Path:
+    if _RUNTIME_DUMP.exists() or not _PACKAGED_DUMP.exists():
+        return _RUNTIME_DUMP
 
-    async with aiofiles.open(_DUMP) as backup_file:  # type: ignore[reportUnknownMemberType]
+    return _PACKAGED_DUMP
+
+
+async def _restore_dividends(ctx: fsm.Ctx) -> None:
+    source = _dividend_source()
+    if not source.exists():
+        raise errors.AdapterError(f"can't restore raw dividends from {source}")
+
+    async with aiofiles.open(source) as backup_file:  # type: ignore[reportUnknownMemberType]
         json_data = await backup_file.read()
 
     try:
@@ -43,12 +53,12 @@ async def _restore_dividends(ctx: fsm.Ctx) -> None:
 
 
 async def _backup_dividends(ctx: fsm.Ctx, divs: list[raw.DivRaw]) -> None:
-    _DUMP.parent.mkdir(parents=True, exist_ok=True)
+    _RUNTIME_DUMP.parent.mkdir(parents=True, exist_ok=True)
 
     divs = sorted(filter(lambda div: div.df, divs), key=lambda div: div.uid)
     docs = [div.model_dump(mode="json") for div in divs]
 
-    async with aiofiles.open(_DUMP, "w") as backup_file:
+    async with aiofiles.open(_RUNTIME_DUMP, "w") as backup_file:
         await backup_file.write(json.dumps(docs, indent=2, sort_keys=True))
 
     ctx.info("Raw dividends back up finished")

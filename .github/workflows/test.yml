@@ -3,25 +3,117 @@ name: poptimizer
 on: [push, pull_request]
 
 jobs:
-  install:
-    name: Lint and Test
-    runs-on: macos-latest
-
+  test:
+    name: Test and build
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:8
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
     steps:
-      - name: Checkout poptimizer
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install go-task
-        run: brew install go-task
+      - name: Setup Python
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          python-version: "3.15"
 
-      - name: Setup venv, install tools and dependencies
-        run: task install
+      - name: Install
+        run: uv sync --frozen --group dev
 
       - name: Lint
-        run: task lint
-
-      - name: Start MongoDB
-        run: task mongo
+        run: |
+          uv run ruff format poptimizer --check
+          uv run ruff check poptimizer
+          uv run pyright poptimizer
 
       - name: Test
-        run: task test
+        run: uv run pytest poptimizer --cov=poptimizer
+
+      - name: Build
+        run: uv build
+
+      - name: Check wheel
+        run: |
+          uv run python - <<'PY'
+          import glob
+          import zipfile
+
+          wheels = glob.glob("dist/*.whl")
+          if len(wheels) != 1:
+              raise SystemExit(f"expected one wheel, got {wheels}")
+          names = set(zipfile.ZipFile(wheels[0]).namelist())
+          required = [
+              "poptimizer/__main__.py",
+              "poptimizer/views/web/templates/index.html",
+              "poptimizer/views/web/static/js/htmx.min.js",
+              "poptimizer/views/web/static/css/style.css",
+              "poptimizer/views/web/static/favicon.svg",
+              "poptimizer/clients/dividends.json",
+          ]
+          missing = [item for item in required if item not in names]
+          if missing:
+              raise SystemExit(f"{wheels[0]} missing {missing}")
+          entry = [name for name in names if name.endswith(".dist-info/entry_points.txt")]
+          if len(entry) != 1 or "poptimizer" not in zipfile.ZipFile(wheels[0]).read(entry[0]).decode():
+              raise SystemExit(f"{wheels[0]} has no poptimizer console script")
+          print(wheels[0])
+          PY
+
+      - name: Install wheel
+        run: |
+          uv pip install --python .venv/bin/python dist/*.whl --no-deps --reinstall
+          .venv/bin/poptimizer -h
+
+  release:
+    name: Publish GitHub release
+    needs: test
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          python-version: "3.15"
+
+      - name: Build
+        run: uv build
+
+      - name: Tag matches package version
+        env:
+          PACKAGE_VERSION: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import sys
+
+          text = pathlib.Path("poptimizer/core/consts.py").read_text()
+          found = re.search(r'__version__ = "([^"]+)"', text).group(1)
+          expected = os.environ["PACKAGE_VERSION"].removeprefix("v")
+          sys.exit(found != expected)
+          PY
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          wheel="$(ls dist/*.whl)"
+          test "$(printf '%s\n' "$wheel" | wc -l)" = "1"
+          name="$(basename "$wheel")"
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --notes "pip install https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${name}"

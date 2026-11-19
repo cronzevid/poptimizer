@@ -28,5 +28,9 @@ class App(
         CliApp.run_subcommand(self)
 
 
-if __name__ == "__main__":
+def main() -> None:
     CliApp.run(App, cli_args=sys.argv[1:] or ["-h"])
+
+
+if __name__ == "__main__":
+    main()

@@ -1,10 +1,11 @@
+import os
 from datetime import date
 from pathlib import Path
 from typing import Final
 
 __version__ = "4.6.0"
 
-ROOT: Final = Path(__file__).parents[2]
+ROOT: Final = Path(os.environ["POPTIMIZER_HOME"]) if os.environ.get("POPTIMIZER_HOME") else Path(__file__).parents[2]
 
 # Дата, с которой собираются дивиденды
 START_DAY: Final = date(2017, 1, 1)

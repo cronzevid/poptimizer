@@ -36,6 +36,23 @@ dependencies = [
     "certifi>=2026.6.17",
 ]
 
+[project.scripts]
+poptimizer = "poptimizer.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["poptimizer"]
+artifacts = [
+    "poptimizer/views/web/**/*.html",
+    "poptimizer/views/web/**/*.css",
+    "poptimizer/views/web/**/*.js",
+    "poptimizer/views/web/**/*.svg",
+    "poptimizer/views/web/**/*.ico",
+    "poptimizer/views/web/**/*.woff2",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+"dump/dividends.json" = "poptimizer/clients/dividends.json"
+
 [dependency-groups]
 dev = [
     "pyright>=1.1.410",
