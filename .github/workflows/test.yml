@@ -1,6 +1,9 @@
 name: poptimizer
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [master]
+  pull_request:
 
 jobs:
   test:
@@ -18,7 +21,7 @@ jobs:
           --health-retries 12
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
         uses: astral-sh/setup-uv@v10.3.3
@@ -75,13 +78,13 @@ jobs:
   release:
     name: Publish GitHub release
     needs: test
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
         uses: astral-sh/setup-uv@v10.3.3
@@ -91,29 +94,24 @@ jobs:
       - name: Build
         run: uv build
 
-      - name: Tag matches package version
-        env:
-          PACKAGE_VERSION: ${{ github.ref_name }}
-        run: |
-          python - <<'PY'
-          import os
-          import pathlib
-          import re
-          import sys
-
-          text = pathlib.Path("poptimizer/core/consts.py").read_text()
-          found = re.search(r'__version__ = "([^"]+)"', text).group(1)
-          expected = os.environ["PACKAGE_VERSION"].removeprefix("v")
-          sys.exit(found != expected)
-          PY
-
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          version="$(python - <<'PY'
+          import pathlib
+          import re
+          text = pathlib.Path("poptimizer/core/consts.py").read_text()
+          print(re.search(r'__version__ = "([^"]+)"', text).group(1))
+          PY
+          )"
+          tag="v${version}"
           wheel="$(ls dist/*.whl)"
           test "$(printf '%s\n' "$wheel" | wc -l)" = "1"
           name="$(basename "$wheel")"
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "$GITHUB_REF_NAME" \
-            --notes "pip install https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${name}"
+          notes="pip install https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${name}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" dist/* --target "$GITHUB_SHA" --title "$tag" --notes "$notes"
+          fi
